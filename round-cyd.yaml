@@ -1,0 +1,749 @@
+# Board: ESP32-2424S012 Round CYD 1.28" (Guition)
+#   ESP32-C3 (bez PSRAM), GC9A01A 240x240 okragly, dotyk CST816S
+# Definition: definitions/boards/esp32-2424s012/manifest.yaml
+#
+# Panel sterowania muzyka w biurze (Music Assistant). 3 ekrany, przelaczane
+# przesunieciem palca w lewo / prawo (tileview):
+#   "Teraz gra" – tytul/wykonawca, prev / play-pause / next,
+#                 glosnosc: luk wokol krawedzi (tylko wskaznik) + przyciski -/+
+#   "Radio"     – 4 stacje (te same co w sc01-plus)
+#   "Do pracy"  – 3 playlisty do skupienia (Spotify przez Music Assistant)
+#
+# WAZNE po pierwszym wgraniu:
+#   HA → Ustawienia → Urzadzenia → ESPHome → round-cyd → kolo zebate →
+#   zaznacz "Zezwol urzadzeniu na wykonywanie akcji Home Assistant".
+#   Bez tego przyciski nic nie zrobia (homeassistant.action zostanie odrzucone).
+#
+# Zmiana presetow: podmien nazwy i URI w sekcji "substitutions".
+# URI daje akcja music_assistant.search / music_assistant.get_library.
+
+substitutions:
+  player: media_player.chromecast8421_2   # Music Assistant → Biuro
+
+  radio1_uri: "library://radio/1"         # Radio 357
+  radio2_uri: "library://radio/2"         # Radio Nowy Swiat
+  radio3_uri: "library://radio/3"         # Trojka
+  # Chilli ZET nie jest w bibliotece MA - URI dostawcy z RadioBrowser
+  radio4_uri: "radiobrowser://radio/40114c00-90ca-4c7d-a5b2-2f91616cacae"
+
+  work1_name: "Muzyka do pracy"
+  work1_uri: "spotify--CyuR5boM://playlist/37i9dQZF1DX4WKDmViNbrh"
+  work2_name: "Koncentracja"
+  work2_uri: "spotify--CyuR5boM://playlist/37i9dQZF1DWZeKCadgRdKQ"
+  work3_name: "lofi beats"
+  work3_uri: "spotify--CyuR5boM://playlist/37i9dQZF1DWWQRwui0ExPn"
+
+  # czasy wygaszania ekranu
+  idle_dim: 30s            # przygaszenie - ekran dalej pokazuje co gra
+  idle_off: 1min           # calkowite wylaczenie ekranu
+
+  # paleta jak w sc01-plus
+  col_bg: "0x05070B"
+  col_bg2: "0x0D1320"
+  col_btn: "0x1A2130"
+  col_btn_press: "0x2B364A"
+  col_border: "0x2A3648"
+  col_track: "0x1E2532"
+  col_accent: "0x2F6BFF"
+  col_text: "0xE8ECF4"
+  col_text_dim: "0x8A93A5"
+
+esphome:
+  name: round-cyd
+  friendly_name: Round CYD
+  min_version: 2025.7.0
+
+esp32:
+  variant: esp32c3
+  flash_size: 4MB
+  framework:
+    type: esp-idf
+
+logger:
+
+api:
+  encryption:
+    key: !secret round_cyd_api_key
+
+ota:
+  - platform: esphome
+    encryption:
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+    ssid: Round CYD Fallback Hotspot
+    password: !secret round_cyd_ap_password
+
+  #use_address: 192.168.100.196
+captive_portal:
+
+# ---------------------------------------------------------------- wyswietlacz
+spi:
+  - id: lcd_bus
+    clk_pin: 6
+    mosi_pin: 7
+
+display:
+  - platform: mipi_spi
+    id: lcd
+    model: GC9A01A
+    spi_id: lcd_bus
+    cs_pin: 10
+    dc_pin:
+      number: 2
+      ignore_strapping_warning: true
+    data_rate: 40MHz
+    invert_colors: true      # jesli czern wychodzi biala - zmien na false
+    # Jesli czerwony i niebieski sa zamienione: color_order: RGB / BGR
+
+output:
+  - platform: ledc
+    id: backlight_out
+    pin: 3
+
+light:
+  - platform: monochromatic
+    id: backlight
+    name: Podświetlenie
+    output: backlight_out
+    restore_mode: ALWAYS_ON
+    default_transition_length: 300ms
+
+i2c:
+  sda: 4
+  scl: 5
+  frequency: 400kHz
+
+touchscreen:
+  - platform: cst816
+    id: touch
+    display: lcd
+    interrupt_pin: 0
+    reset_pin: 1
+    on_touch:
+      # wybudzenie: pelna jasnosc (LVGL sam wraca z pauzy - resume_on_input)
+      - light.turn_on:
+          id: backlight
+          brightness: 100%
+
+# --------------------------------------------------------------------- czcionki
+# C3 ma malo flasha na aplikacje (OTA) - tylko 3 rozmiary tekstu + ikony.
+font:
+  - file:
+      type: gfonts
+      family: Inter
+      weight: 700
+    id: f_title
+    size: 20
+    bpp: 4
+    glyphsets: [GF_Latin_Core]
+    glyphs: ["ąćęłńóśźżĄĆĘŁŃÓŚŹŻ•–—"]
+
+  - file:
+      type: gfonts
+      family: Inter
+      weight: 500
+    id: f_body
+    size: 16
+    bpp: 4
+    glyphsets: [GF_Latin_Core]
+    glyphs: ["ąćęłńóśźżĄĆĘŁŃÓŚŹŻ•–—"]
+
+  - file:
+      type: gfonts
+      family: Inter
+      weight: 400
+    id: f_small
+    size: 13
+    bpp: 4
+    glyphsets: [GF_Latin_Core]
+    glyphs: ["ąćęłńóśźżĄĆĘŁŃÓŚŹŻ•–—"]
+
+  # Material Design Icons - tylko potrzebne znaki
+  - file: "https://github.com/Templarian/MaterialDesign-Webfont/raw/master/fonts/materialdesignicons-webfont.ttf"
+    id: f_icon_big
+    size: 40
+    bpp: 4
+    glyphs: ["\U000F040A", "\U000F03E4"]            # play, pause
+  - file: "https://github.com/Templarian/MaterialDesign-Webfont/raw/master/fonts/materialdesignicons-webfont.ttf"
+    id: f_icon
+    size: 26
+    bpp: 4
+    glyphs:
+      - "\U000F04AE"   # skip-previous
+      - "\U000F04AD"   # skip-next
+      - "\U000F0CB8"   # playlist-music
+  - file: "https://github.com/Templarian/MaterialDesign-Webfont/raw/master/fonts/materialdesignicons-webfont.ttf"
+    id: f_icon_small
+    size: 20
+    bpp: 4
+    glyphs: ["\U000F0374", "\U000F0415"]            # minus, plus
+
+# ---------------------------------------------------------------- grafika
+# Logotypy stacji - te same pliki co w sc01-plus (esphome/images/).
+image:
+  - platform: file
+    id: img_r357
+    file: images/radio357.png
+    type: RGB565
+    transparency: alpha_channel
+    resize: 44x44
+  - platform: file
+    id: img_rns
+    file: images/nowyswiat.png
+    type: RGB565
+    transparency: alpha_channel
+    resize: 44x44
+  - platform: file
+    id: img_trojka          # 250x88 - wordmark, stad inne proporcje
+    file: images/trojka.png
+    type: RGB565
+    transparency: alpha_channel
+    resize: 68x24
+  - platform: file
+    id: img_chilli
+    file: images/chillizet.png
+    type: RGB565
+    transparency: alpha_channel
+    resize: 44x44
+
+# ------------------------------------------------------- stan gracza z HA
+globals:
+  - id: vol_touch_ts
+    type: uint32_t
+    restore_value: false
+    initial_value: "0"
+  # glosnosc 0..100 wyliczana lokalnie, zeby szybkie stukanie -/+ sie sumowalo
+  - id: vol_target
+    type: int
+    restore_value: false
+    initial_value: "0"
+
+script:
+  # Przycisk -/+: od razu przesuwa luk, a do HA idzie jedna akcja po serii stukniec.
+  - id: vol_step
+    mode: queued
+    parameters:
+      delta: int
+    then:
+      - lambda: |-
+          // po chwili bez stukania startuj od aktualnej glosnosci z HA
+          if (millis() - id(vol_touch_ts) > 2500 && !std::isnan(id(ha_volume).state))
+            id(vol_target) = (int) (id(ha_volume).state * 100.0f + 0.5f);
+          id(vol_target) = std::max(0, std::min(100, id(vol_target) + delta));
+          id(vol_touch_ts) = millis();
+      - lvgl.arc.update:
+          id: arc_vol
+          value: !lambda "return id(vol_target);"
+      - lvgl.label.update:
+          id: lbl_vol
+          text: !lambda |-
+            char buf[8];
+            snprintf(buf, sizeof(buf), "%d%%", id(vol_target));
+            return std::string(buf);
+      - script.execute:
+          id: push_volume
+          vol: !lambda "return id(vol_target);"
+
+  # Wysyla jedna akcje ~400 ms po ostatnim stuknieciu.
+  - id: push_volume
+    mode: restart
+    parameters:
+      vol: int
+    then:
+      - delay: 400ms
+      - homeassistant.action:
+          action: media_player.volume_set
+          data:
+            entity_id: ${player}
+          data_template:
+            volume_level: "{{ v }}"
+          variables:
+            v: !lambda "return vol / 100.0f;"
+
+text_sensor:
+  - platform: homeassistant
+    id: ha_state
+    entity_id: ${player}
+    on_value:
+      - lvgl.label.update:
+          id: lbl_icon_play
+          text: !lambda |-
+            return x == "playing" ? std::string("\U000F03E4") : std::string("\U000F040A");
+      - lvgl.widget.update:
+          id: btn_play
+          bg_color: !lambda |-
+            return x == "playing" ? lv_color_hex(${col_accent}) : lv_color_hex(${col_btn});
+      - lvgl.label.update:
+          id: lbl_state
+          text: !lambda |-
+            if (x == "playing") return std::string("Odtwarzanie");
+            if (x == "paused") return std::string("Pauza");
+            if (x == "idle") return std::string("Bezczynny");
+            if (x == "off") return std::string("Wyłączony");
+            if (x == "unavailable" || x == "unknown") return std::string("Niedostępny");
+            return x;
+
+  - platform: homeassistant
+    id: ha_title
+    entity_id: ${player}
+    attribute: media_title
+    on_value:
+      - lvgl.label.update:
+          id: lbl_title
+          text: !lambda |-
+            if (x.empty() || x == "unknown") return std::string("Nic nie gra");
+            return x;
+
+  - platform: homeassistant
+    id: ha_artist
+    entity_id: ${player}
+    attribute: media_artist
+    on_value:
+      - lvgl.label.update:
+          id: lbl_artist
+          text: !lambda |-
+            if (x.empty() || x == "unknown") return std::string("—");
+            return x;
+
+sensor:
+  - platform: homeassistant
+    id: ha_volume
+    entity_id: ${player}
+    attribute: volume_level
+    on_value:
+      # nie nadpisuj luku, dopoki ktos go trzyma / wlasnie puscil
+      - if:
+          condition:
+            lambda: "return millis() - id(vol_touch_ts) > 2500;"
+          then:
+            - lvgl.arc.update:
+                id: arc_vol
+                value: !lambda "return x * 100.0f;"
+            - lvgl.label.update:
+                id: lbl_vol
+                text: !lambda |-
+                  char buf[8];
+                  snprintf(buf, sizeof(buf), "%d%%", (int) (x * 100.0f + 0.5f));
+                  return std::string(buf);
+
+# -------------------------------------------------------------------- interfejs
+# Ekran jest okragly (promien 120, srodek 120,120) - wszystko ulozone tak,
+# zeby rogi widgetow miescily sie w kole. Kropki na dole kazdego ekranu
+# pokazuja, na ktorej stronie jestes (podswietlona = biezaca).
+lvgl:
+  displays: [lcd]
+  touchscreens: [touch]
+  buffer_size: 25%          # brak PSRAM - maly bufor rysowania
+  default_font: f_body
+  bottom_layer:
+    bg_color: ${col_bg}
+
+  on_idle:
+    # 1) przygaszenie - ekran nadal pokazuje, co gra
+    - timeout: ${idle_dim}
+      then:
+        - light.turn_on:
+            id: backlight
+            brightness: 15%
+    # 2) wygaszenie + pauza LVGL, zeby pierwszy dotyk tylko budzil
+    - timeout: ${idle_off}
+      then:
+        - light.turn_off: backlight
+        - lvgl.pause:
+
+  theme:
+    dark_mode: true
+    obj:
+      border_width: 0
+      pad_all: 0
+    label:
+      text_color: ${col_text}
+    button:
+      bg_color: ${col_btn}
+      bg_opa: COVER
+      border_width: 1
+      border_color: ${col_border}
+      border_opa: COVER
+      text_color: ${col_text}
+      shadow_width: 0
+      pressed:
+        bg_color: ${col_btn_press}
+
+  # wskaznik strony: 3 kropki, srodkowa y=216 (w dolnej przerwie luku)
+  style_definitions:
+    - id: dot
+      width: 6
+      height: 6
+      radius: 3
+      bg_color: ${col_border}
+      bg_opa: COVER
+      y: 214
+    - id: dot_on
+      bg_color: ${col_accent}
+    - id: tile_bg
+      bg_color: ${col_bg}
+      bg_grad_color: ${col_bg2}
+      bg_grad_dir: VER
+      bg_opa: COVER
+
+  widgets:
+    - tileview:
+        id: tiles
+        width: 240
+        height: 240
+        bg_color: ${col_bg}
+        scrollbar_mode: "OFF"
+        tiles:
+          # ================================================== TERAZ GRA
+          - id: tile_now
+            row: 0
+            column: 0
+            dir: HOR
+            styles: tile_bg
+            scrollbar_mode: "OFF"
+            widgets:
+              # Glosnosc: luk 270° przy krawedzi, przerwa na dole.
+              # Tylko wskaznik - nie reaguje na dotyk, bo lapal kazde
+              # przesuniecie zaczete przy brzegu. Zmiana: przyciski -/+ nizej.
+              - arc:
+                  id: arc_vol
+                  align: CENTER
+                  width: 232
+                  height: 232
+                  min_value: 0
+                  max_value: 100
+                  value: 0
+                  start_angle: 135
+                  end_angle: 45
+                  adjustable: false
+                  clickable: false
+                  arc_color: ${col_track}
+                  arc_width: 10
+                  indicator:
+                    arc_color: ${col_accent}
+                    arc_width: 10
+                  knob:
+                    bg_opa: TRANSP
+
+              - label:
+                  id: lbl_state
+                  align: TOP_MID
+                  y: 36
+                  text: "Łączenie…"
+                  text_font: f_small
+                  text_color: ${col_text_dim}
+              - label:
+                  id: lbl_title
+                  align: TOP_MID
+                  y: 56
+                  width: 176
+                  text: "Nic nie gra"
+                  text_font: f_title
+                  text_align: CENTER
+                  long_mode: SCROLL_CIRCULAR
+              - label:
+                  id: lbl_artist
+                  align: TOP_MID
+                  y: 84
+                  width: 170
+                  text: "—"
+                  text_color: ${col_text_dim}
+                  text_align: CENTER
+                  long_mode: DOT
+
+              - button:
+                  id: btn_prev
+                  align: CENTER
+                  x: -66
+                  y: 22
+                  width: 50
+                  height: 50
+                  radius: 25
+                  widgets:
+                    - label:
+                        text: "\U000F04AE"
+                        text_font: f_icon
+                        align: CENTER
+                  on_click:
+                    - homeassistant.action:
+                        action: media_player.media_previous_track
+                        data:
+                          entity_id: ${player}
+              - button:
+                  id: btn_play
+                  align: CENTER
+                  y: 22
+                  width: 70
+                  height: 70
+                  radius: 35
+                  widgets:
+                    - label:
+                        id: lbl_icon_play
+                        text: "\U000F040A"
+                        text_font: f_icon_big
+                        align: CENTER
+                  on_click:
+                    - homeassistant.action:
+                        action: media_player.media_play_pause
+                        data:
+                          entity_id: ${player}
+              - button:
+                  id: btn_next
+                  align: CENTER
+                  x: 66
+                  y: 22
+                  width: 50
+                  height: 50
+                  radius: 25
+                  widgets:
+                    - label:
+                        text: "\U000F04AD"
+                        text_font: f_icon
+                        align: CENTER
+                  on_click:
+                    - homeassistant.action:
+                        action: media_player.media_next_track
+                        data:
+                          entity_id: ${player}
+
+              # dolna przerwa luku:  [-]  63%  [+]
+              - button:
+                  align: TOP_MID
+                  x: -44
+                  y: 174
+                  width: 36
+                  height: 36
+                  radius: 18
+                  widgets:
+                    - label:
+                        text: "\U000F0374"
+                        text_font: f_icon_small
+                        align: CENTER
+                  on_click:
+                    - script.execute:
+                        id: vol_step
+                        delta: -5
+              - label:
+                  id: lbl_vol
+                  align: TOP_MID
+                  y: 184
+                  text: "--%"
+                  text_font: f_small
+                  text_color: ${col_text_dim}
+              - button:
+                  align: TOP_MID
+                  x: 44
+                  y: 174
+                  width: 36
+                  height: 36
+                  radius: 18
+                  widgets:
+                    - label:
+                        text: "\U000F0415"
+                        text_font: f_icon_small
+                        align: CENTER
+                  on_click:
+                    - script.execute:
+                        id: vol_step
+                        delta: 5
+
+              - obj: {styles: [dot, dot_on], x: 105}
+              - obj: {styles: dot, x: 117}
+              - obj: {styles: dot, x: 129}
+
+          # ====================================================== RADIO
+          # siatka 2x2 kafli 80x64, srodki w (120±44, 124±38)
+          - id: tile_radio
+            row: 0
+            column: 1
+            dir: HOR
+            styles: tile_bg
+            scrollbar_mode: "OFF"
+            widgets:
+              - label:
+                  align: TOP_MID
+                  y: 22
+                  text: "Radio"
+                  text_font: f_title
+              - button:
+                  align: CENTER
+                  x: -44
+                  y: -34
+                  width: 80
+                  height: 64
+                  radius: 18
+                  widgets:
+                    - image: {src: img_r357, align: CENTER}
+                  on_click:
+                    - homeassistant.action:
+                        action: music_assistant.play_media
+                        data:
+                          entity_id: ${player}
+                          media_id: "${radio1_uri}"
+                          media_type: radio
+                          enqueue: replace
+                    - lvgl.tileview.select: {id: tiles, tile_id: tile_now, animated: true}
+              - button:
+                  align: CENTER
+                  x: 44
+                  y: -34
+                  width: 80
+                  height: 64
+                  radius: 18
+                  widgets:
+                    - image: {src: img_rns, align: CENTER}
+                  on_click:
+                    - homeassistant.action:
+                        action: music_assistant.play_media
+                        data:
+                          entity_id: ${player}
+                          media_id: "${radio2_uri}"
+                          media_type: radio
+                          enqueue: replace
+                    - lvgl.tileview.select: {id: tiles, tile_id: tile_now, animated: true}
+              - button:
+                  align: CENTER
+                  x: -44
+                  y: 38
+                  width: 80
+                  height: 64
+                  radius: 18
+                  widgets:
+                    - image: {src: img_trojka, align: CENTER}
+                  on_click:
+                    - homeassistant.action:
+                        action: music_assistant.play_media
+                        data:
+                          entity_id: ${player}
+                          media_id: "${radio3_uri}"
+                          media_type: radio
+                          enqueue: replace
+                    - lvgl.tileview.select: {id: tiles, tile_id: tile_now, animated: true}
+              - button:
+                  align: CENTER
+                  x: 44
+                  y: 38
+                  width: 80
+                  height: 64
+                  radius: 18
+                  widgets:
+                    - image: {src: img_chilli, align: CENTER}
+                  on_click:
+                    - homeassistant.action:
+                        action: music_assistant.play_media
+                        data:
+                          entity_id: ${player}
+                          media_id: "${radio4_uri}"
+                          media_type: radio
+                          enqueue: replace
+                    - lvgl.tileview.select: {id: tiles, tile_id: tile_now, animated: true}
+
+              - obj: {styles: dot, x: 105}
+              - obj: {styles: [dot, dot_on], x: 117}
+              - obj: {styles: dot, x: 129}
+
+          # =================================================== DO PRACY
+          # 3 "pigulki" 180x42 jedna pod druga (y = 54 / 102 / 150)
+          - id: tile_work
+            row: 0
+            column: 2
+            dir: HOR
+            styles: tile_bg
+            scrollbar_mode: "OFF"
+            widgets:
+              - label:
+                  align: TOP_MID
+                  y: 22
+                  text: "Do pracy"
+                  text_font: f_title
+              - button:
+                  align: TOP_MID
+                  y: 54
+                  width: 180
+                  height: 42
+                  radius: 21
+                  widgets:
+                    - label:
+                        text: "\U000F0CB8"
+                        text_font: f_icon
+                        text_color: ${col_accent}
+                        align: LEFT_MID
+                        x: 12
+                    - label:
+                        text: "${work1_name}"
+                        width: 126
+                        align: LEFT_MID
+                        x: 46
+                        long_mode: DOT
+                  on_click:
+                    - homeassistant.action:
+                        action: music_assistant.play_media
+                        data:
+                          entity_id: ${player}
+                          media_id: "${work1_uri}"
+                          media_type: playlist
+                          enqueue: replace
+                    - lvgl.tileview.select: {id: tiles, tile_id: tile_now, animated: true}
+              - button:
+                  align: TOP_MID
+                  y: 102
+                  width: 180
+                  height: 42
+                  radius: 21
+                  widgets:
+                    - label:
+                        text: "\U000F0CB8"
+                        text_font: f_icon
+                        text_color: ${col_accent}
+                        align: LEFT_MID
+                        x: 12
+                    - label:
+                        text: "${work2_name}"
+                        width: 126
+                        align: LEFT_MID
+                        x: 46
+                        long_mode: DOT
+                  on_click:
+                    - homeassistant.action:
+                        action: music_assistant.play_media
+                        data:
+                          entity_id: ${player}
+                          media_id: "${work2_uri}"
+                          media_type: playlist
+                          enqueue: replace
+                    - lvgl.tileview.select: {id: tiles, tile_id: tile_now, animated: true}
+              - button:
+                  align: TOP_MID
+                  y: 150
+                  width: 180
+                  height: 42
+                  radius: 21
+                  widgets:
+                    - label:
+                        text: "\U000F0CB8"
+                        text_font: f_icon
+                        text_color: ${col_accent}
+                        align: LEFT_MID
+                        x: 12
+                    - label:
+                        text: "${work3_name}"
+                        width: 126
+                        align: LEFT_MID
+                        x: 46
+                        long_mode: DOT
+                  on_click:
+                    - homeassistant.action:
+                        action: music_assistant.play_media
+                        data:
+                          entity_id: ${player}
+                          media_id: "${work3_uri}"
+                          media_type: playlist
+                          enqueue: replace
+                    - lvgl.tileview.select: {id: tiles, tile_id: tile_now, animated: true}
+
+              - obj: {styles: dot, x: 105}
+              - obj: {styles: dot, x: 117}
+              - obj: {styles: [dot, dot_on], x: 129}
